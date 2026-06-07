@@ -215,26 +215,6 @@ void ping_monitor_task(void *arg)
     }
 }
 
-/* GET /status - all known endpoints in home lab */
-esp_err_t lan_status_handler(httpd_req_t *req)
-{
-    /* Send a simple response */
-    cJSON *json = cJSON_CreateObject();
-    cJSON *arr = cJSON_AddArrayToObject(json, "machines");
-    for (int i = 0; i < curr_list.count; i++)
-    {
-        cJSON *mach = cJSON_CreateObject();
-        cJSON_AddNumberToObject(mach, "id", i);
-        cJSON_AddStringToObject(mach, "ip", curr_list.entries[i].ip);
-        cJSON_AddStringToObject(mach, "name", curr_list.entries[i].name);
-        cJSON_AddStringToObject(mach, "status", curr_list.entries[i].status ? "Healthy" : "Unhealthy");
-        cJSON_AddItemToArray(arr, mach);
-    }
-    return send_json(req, json);
-}
-
-/* Helper */
-
 /* POST /wol - Send a magic Wake-On-LAN packet to the specified machine */
 esp_err_t WOL_handler(httpd_req_t *req)
 {
@@ -331,14 +311,7 @@ esp_err_t WOL_handler(httpd_req_t *req)
     }
 }
 
-/* GET /wol - Get a dropdown list of machines to send Wake-On-LAN packet to */
-esp_err_t WOL_page(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_sendstr(req, WOL_PAGE_HTML);
-    return ESP_OK;
-}
-
+/* POST /api/machines - Update the machines list with the sent json */
 static esp_err_t update_machines_handler(httpd_req_t *req)
 {
     char *body = read_post_body(req);
@@ -457,7 +430,7 @@ static esp_err_t update_machines_handler(httpd_req_t *req)
     return send_json(req, resp);
 }
 
-/* GET /api/machines - all known endpoints in home lab */
+/* GET /api/machines - all known endpoints in home lab and its relevant info */
 esp_err_t get_machines_handler(httpd_req_t *req)
 {
     /* Send a simple response */
@@ -486,16 +459,6 @@ static httpd_uri_t wol_post = {
     .method = HTTP_POST,
     .handler = WOL_handler,
     .user_ctx = NULL};
-static httpd_uri_t wol_get = {
-    .uri = "/wol",
-    .method = HTTP_GET,
-    .handler = WOL_page,
-    .user_ctx = NULL};
-static httpd_uri_t status_get = {
-    .uri = "/status",
-    .method = HTTP_GET,
-    .handler = lan_status_handler,
-    .user_ctx = NULL};
 static httpd_uri_t machines_post = {
     .uri = "/api/machines",
     .method = HTTP_POST,
@@ -519,9 +482,7 @@ void start_webserver(microlink_t *ml)
 
     if (server)
     {
-        httpd_register_uri_handler(server, &status_get);
         ESP_LOGI(TAG, "URI /status added");
-        httpd_register_uri_handler(server, &wol_get);
         httpd_register_uri_handler(server, &wol_post);
         httpd_register_uri_handler(server, &machines_post);
         httpd_register_uri_handler(server, &machines_get);
