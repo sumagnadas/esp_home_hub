@@ -466,8 +466,10 @@ esp_err_t get_machines_handler(httpd_req_t *req)
     for (int i = 0; i < curr_list.count; i++)
     {
         cJSON *mach = cJSON_CreateObject();
+        cJSON_AddNumberToObject(mach, "id", i);
         cJSON_AddStringToObject(mach, "ip", curr_list.entries[i].ip);
         cJSON_AddStringToObject(mach, "name", curr_list.entries[i].name);
+        cJSON_AddStringToObject(mach, "status", curr_list.entries[i].status ? "Healthy" : "Unhealthy");
         uint8_t *mac = curr_list.entries[i].mac_addr;
         char macStr[18]; // 17 characters + null terminator
         sprintf(macStr, "%02x:%02x:%02x:%02x:%02x:%02x",

@@ -34,7 +34,7 @@ static const char WOL_PAGE_HTML[] =
 
     "async function loadMachines(){"
     "try{"
-    "const r=await fetch('/status');"
+    "const r=await fetch('/api/machines');"
     "const d=await r.json();"
     "machines=d.machines||[];"
     "renderMachines();"
