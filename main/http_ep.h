@@ -1,10 +1,12 @@
 #include "esp_http_server.h"
 #include "microlink_internal.h"
 
+#define MAX_MACHINES_ENTRIES 16
+
 typedef struct
 {
-    char *ip;
-    char *name;
+    char ip[16];
+    char name[100];
     uint8_t mac_addr[6];
     volatile int status;
     volatile int is_pinging;
@@ -16,12 +18,11 @@ static const char WOL_PAGE_HTML[] =
     "<title>WoL selection</title>"
     "</head><body>"
 
-    // "<form action=/wol method=\"POST\" enctype=\"application/x-www-form-urlencoded\">"
     "<label for=\"wol-select\">Choose a machine to wake up</label><br>"
     "<select id=\"wol-select\" name=\"index\"><br>"
     "</select>"
     "<button onClick=\"wake()\">Wake</button>"
-    // "</form>"
+
     "<script>"
     "machines=[];"
     "function renderMachines(){"
@@ -45,8 +46,7 @@ static const char WOL_PAGE_HTML[] =
     "const ind=parseInt(document.getElementById('wol-select').value.trim());"
     "await fetch('/wol',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({index:ind})});"
-    "}"
-    "}catch(e){}"
+    "}catch(e){}}"
     "loadMachines();"
     "</script>"
     "</body></html>";
