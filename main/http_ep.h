@@ -8,8 +8,8 @@ typedef struct
     char ip[16];
     char name[100];
     uint8_t mac_addr[6];
-    volatile int status;
-    volatile int is_pinging;
+    volatile uint8_t status;
+    volatile uint8_t is_pinging;
 } machine_t;
 
 void start_webserver(microlink_t *);

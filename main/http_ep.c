@@ -28,18 +28,11 @@ static const char *TAG = "http_server";
 typedef struct __attribute__((packed))
 {
     uint8_t count; /* Number of entries (0..16) */
-    machine_t *entries;
-} machine_list_t; /* 1570 bytes max */
+    machine_t entries[MAX_MACHINES_ENTRIES];
+} machine_list_t; /* 1985 bytes max */
 
-machine_t *machines = NULL;
-
-machine_list_t curr_list = {};
-/*
-    {.ip = "192.168.29.60",
-     .name = "NAS",
-     .mac_addr = {0x18, 0x60, 0x24, 0xbf, 0x60, 0xf3},
-     .status = 0,
-     .is_pinging = 0},*/
+machine_list_t curr_list = {}; // Global list for all the homelabb machines
+nvs_handle_t nvs;              // Global NVS handle
 
 /* Helper: send JSON response */
 static esp_err_t
@@ -56,6 +49,42 @@ send_json(httpd_req_t *req, cJSON *json)
     httpd_resp_sendstr(req, str);
     free(str);
     return ESP_OK;
+}
+
+/* Helper: Load the global NVS handle */
+static esp_err_t load_nvs()
+{
+    esp_err_t err = nvs_open("nvs", NVS_READWRITE, &nvs);
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+    return ESP_OK;
+}
+
+/* Helper: Load the machines list from NVS*/
+static void load_machines()
+{
+    memset(&curr_list, 0, sizeof(machine_list_t));
+
+    size_t stored_len = 0;
+    esp_err_t err = nvs_get_blob(nvs, "machines", NULL, &stored_len);
+
+    if (err == ESP_OK && stored_len > 0)
+    {
+        err = nvs_get_blob(nvs, "machines", &curr_list, &stored_len);
+        if (err != ESP_OK)
+        {
+            if (err == ESP_ERR_NVS_NOT_FOUND)
+            {
+                ESP_LOGW(TAG, "machines not found!");
+            }
+
+            ESP_LOGW(TAG, "MACHINES CANNOT BE READ SUCCESSFULLY");
+            return;
+        }
+        ESP_LOGW(TAG, "MACHINES READ SUCCESSFULLY: %d", stored_len);
+    }
 }
 
 /* Helper: read POST body into buffer */
@@ -205,12 +234,8 @@ void ping_monitor_task(void *arg)
     while (1)
     {
         for (int i = 0; i < curr_list.count; i++)
-        {
             if (!curr_list.entries[i].is_pinging)
-            {
                 ping(i);
-            }
-        }
         vTaskDelay(pdMS_TO_TICKS(10000)); // ping every 10s
     }
 }
@@ -234,7 +259,6 @@ esp_err_t WOL_handler(httpd_req_t *req)
 
     // Start the UDP socket
     int sock, optval = 1;
-    char mac[18] = "";
     if ((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
     {
         ESP_LOGE(TAG, "Cannot open socket: %s ...!\n", strerror(errno));
@@ -278,10 +302,6 @@ esp_err_t WOL_handler(httpd_req_t *req)
     }
     else
         return ESP_FAIL;
-    // else if (mac)
-    // {
-    //     // match mach by mac
-    // }
     uint8_t payload[17 * 6];
     memset(payload, 0xFF, 6); // first 6 bytes = FF FF FF FF FF FF
     if (mach)
@@ -339,13 +359,9 @@ static esp_err_t update_machines_handler(httpd_req_t *req)
 
     int arr_size = cJSON_GetArraySize(machines);
     curr_list.count = 0;
-
-    machine_list_t old = {
-        .count = curr_list.count,
-        .entries = curr_list.entries};
-    curr_list.count = 0;
-    curr_list.entries = NULL;
-    for (int i = 0; i < arr_size && i < MAX_MACHINES_ENTRIES; i++)
+    machine_list_t old;
+    memcpy(&old, &curr_list, sizeof(machine_list_t));
+    for (int i = 0; i < arr_size && curr_list.count < MAX_MACHINES_ENTRIES; i++)
     {
         cJSON *entry = cJSON_GetArrayItem(machines, i);
         cJSON *name = cJSON_GetObjectItem(entry, "name");
@@ -359,70 +375,36 @@ static esp_err_t update_machines_handler(httpd_req_t *req)
         if (!ip || !cJSON_IsString(ip) || ip->valuestring[0] == '\0')
             continue;
 
-        curr_list.count++;
-    }
-    curr_list.entries = malloc(curr_list.count * sizeof(machine_t));
-    for (int i = 0, id = 0; i < arr_size && i < MAX_MACHINES_ENTRIES; i++)
-    {
-        cJSON *entry = cJSON_GetArrayItem(machines, i);
-        cJSON *name = cJSON_GetObjectItem(entry, "name");
-        cJSON *mac = cJSON_GetObjectItem(entry, "mac");
-        cJSON *ip = cJSON_GetObjectItem(entry, "ip");
-        int values[6];
-        if (!name || !cJSON_IsString(name) || name->valuestring[0] == '\0')
-            continue;
-        if (!mac || !cJSON_IsString(mac) || mac->valuestring[0] == '\0' || (6 != sscanf(mac->valuestring, "%02x:%02x:%02x:%02x:%02x:%02x", &values[0], &values[1], &values[2], &values[3], &values[4], &values[5])))
-            continue;
-        if (!ip || !cJSON_IsString(ip) || ip->valuestring[0] == '\0')
-            continue;
-
-        strcpy(curr_list.entries[id].name, name->valuestring);
-        strcpy(curr_list.entries[id].ip, ip->valuestring);
+        strcpy(curr_list.entries[curr_list.count].name, name->valuestring);
+        strcpy(curr_list.entries[curr_list.count].ip, ip->valuestring);
         for (int i = 0; i < 6; ++i)
-            curr_list.entries[id].mac_addr[i] = values[i];
-        ESP_LOGW(TAG, "IP: %s", curr_list.entries[id].ip);
-        ESP_LOGW(TAG, "MAC: %02x:%02x:%02x:%02x:%02x:%02x", curr_list.entries[id].mac_addr[0], curr_list.entries[id].mac_addr[1], curr_list.entries[id].mac_addr[2], curr_list.entries[id].mac_addr[3], curr_list.entries[id].mac_addr[4], curr_list.entries[id].mac_addr[5]);
-        ESP_LOGW(TAG, "NAME: %s", curr_list.entries[id].name);
-        curr_list.entries[id].status = false;
-        curr_list.entries[id].is_pinging = false;
-        id++;
+            curr_list.entries[curr_list.count].mac_addr[i] = values[i];
+        ESP_LOGW(TAG, "IP: %s", curr_list.entries[curr_list.count].ip);
+        ESP_LOGW(TAG, "MAC: %02x:%02x:%02x:%02x:%02x:%02x", curr_list.entries[curr_list.count].mac_addr[0], curr_list.entries[curr_list.count].mac_addr[1], curr_list.entries[curr_list.count].mac_addr[2], curr_list.entries[curr_list.count].mac_addr[3], curr_list.entries[curr_list.count].mac_addr[4], curr_list.entries[curr_list.count].mac_addr[5]);
+        ESP_LOGW(TAG, "NAME: %s", curr_list.entries[curr_list.count].name);
+        curr_list.entries[curr_list.count].status = false;
+        curr_list.entries[curr_list.count].is_pinging = false;
+        curr_list.count++;
     }
     cJSON_Delete(json);
 
     // save
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open("nvs", NVS_READWRITE, &nvs);
-    if (err != ESP_OK)
-    {
-        if (curr_list.entries)
-            free(curr_list.entries);
-        curr_list.count = old.count;
-        curr_list.entries = old.entries;
-        return err;
-    }
-
-    size_t save_len = 1 + curr_list.count * sizeof(machine_t);
-
-    err = nvs_set_blob(nvs, "machines", &curr_list, save_len);
+    esp_err_t err = nvs_set_blob(nvs, "machines", &curr_list, sizeof(machine_list_t));
     cJSON *resp = cJSON_CreateObject();
     if (err == ESP_OK)
     {
+        // commit
         nvs_commit(nvs);
         ESP_LOGW(TAG, "Machines list saved (%d entries, %d bytes)",
-                 curr_list.count, (int)save_len);
+                 curr_list.count, (int)sizeof(machine_list_t));
         cJSON_AddBoolToObject(resp, "ok", true);
         cJSON_AddNumberToObject(resp, "count", curr_list.count);
-        if (old.entries)
-            free(old.entries);
     }
     else
     {
         ESP_LOGE(TAG, "Failed to save machines list (%d bytes): %s",
-                 (int)save_len, esp_err_to_name(err));
-        if (curr_list.entries)
-            free(curr_list.entries);
-        curr_list.count = old.count;
-        curr_list.entries = old.entries;
+                 (int)sizeof(machine_list_t), esp_err_to_name(err));
+        memcpy(&curr_list, &old, sizeof(machine_list_t));
         cJSON_AddBoolToObject(resp, "ok", false);
         cJSON_AddNumberToObject(resp, "count", curr_list.count);
     }
@@ -472,14 +454,15 @@ static httpd_uri_t machines_get = {
 
 void start_webserver(microlink_t *ml)
 {
-    // /* Empty handle to esp_http_server */
+    /* Empty handle to esp_http_sserver */
     httpd_handle_t server = NULL;
     server = ml_get_httpd_handle(ml->config_httpd);
 
     ESP_LOGI(TAG, "Server status: %s", server != NULL ? "On" : "Off");
 
     xTaskCreate(ping_monitor_task, "ping_monitor", 4096, NULL, 5, NULL);
-
+    if (load_nvs() == ESP_OK)
+        load_machines();
     if (server)
     {
         ESP_LOGI(TAG, "URI /status added");
